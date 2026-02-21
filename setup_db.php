@@ -17,6 +17,7 @@ try {
         `session_name` VARCHAR(255) NOT NULL,
         `folder_path` TEXT NOT NULL,
         `exam_instructions` LONGTEXT,
+        `criteria_json` LONGTEXT COMMENT 'JSON array of {key, label, max_points, description}',
         `total_students` INT DEFAULT 0,
         `graded_count` INT DEFAULT 0,
         `status` ENUM('pending','processing','completed','error') DEFAULT 'pending',
@@ -24,10 +25,17 @@ try {
         `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB");
 
+    // Add criteria_json column if table already exists
+    try {
+        $pdo->exec("ALTER TABLE `grading_sessions` ADD COLUMN `criteria_json` LONGTEXT COMMENT 'JSON array of {key, label, max_points, description}' AFTER `exam_instructions`");
+    } catch (PDOException $e) {
+        // Column already exists, ignore
+    }
+
     // Student submissions table
     $pdo->exec("CREATE TABLE IF NOT EXISTS `student_submissions` (
         `id` INT AUTO_INCREMENT PRIMARY KEY,
-        `session_id` INT NOT NULL,
+        `session_id` INT NOT NULL, 
         `student_name` VARCHAR(255) NOT NULL,
         `folder_name` VARCHAR(500) NOT NULL,
         `folder_path` TEXT NOT NULL,
@@ -37,6 +45,7 @@ try {
         `part_d` DECIMAL(5,1) DEFAULT 0,
         `part_e` DECIMAL(5,1) DEFAULT 0,
         `bonus` DECIMAL(5,1) DEFAULT 0,
+        `scores_json` LONGTEXT COMMENT 'JSON object of dynamic scores {key: score}',
         `total_score` DECIMAL(5,1) DEFAULT 0,
         `final_score` DECIMAL(5,1) DEFAULT 0,
         `percentage` DECIMAL(5,1) DEFAULT 0,
@@ -52,6 +61,13 @@ try {
         `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (`session_id`) REFERENCES `grading_sessions`(`id`) ON DELETE CASCADE
     ) ENGINE=InnoDB");
+
+    // Add scores_json column if table already exists
+    try {
+        $pdo->exec("ALTER TABLE `student_submissions` ADD COLUMN `scores_json` LONGTEXT COMMENT 'JSON object of dynamic scores {key: score}' AFTER `bonus`");
+    } catch (PDOException $e) {
+        // Column already exists, ignore
+    }
 
     // Exam criteria table  
     $pdo->exec("CREATE TABLE IF NOT EXISTS `exam_criteria` (

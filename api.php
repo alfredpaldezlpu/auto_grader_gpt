@@ -74,13 +74,131 @@ switch ($action) {
         ]);
         break;
 
+    case 'parse_criteria':
+        $examText = $_POST['exam_text'] ?? '';
+        if (empty(trim($examText))) {
+            echo json_encode(['success' => false, 'error' => 'No exam text provided.']);
+            exit;
+        }
+
+        // Use GPT to extract rubric criteria from the exam instructions
+        $criteriaPrompt = "You are analyzing exam instructions to extract the grading rubric/criteria.\n\n";
+        $criteriaPrompt .= "=== EXAM INSTRUCTIONS ===\n{$examText}\n\n";
+        $criteriaPrompt .= "=== TASK ===\n";
+        $criteriaPrompt .= "Extract ALL graded sections/parts from these exam instructions. For each section, identify:\n";
+        $criteriaPrompt .= "1. A short unique key (e.g., 'part_a', 'task_1', 'section_setup', 'bonus')\n";
+        $criteriaPrompt .= "2. The label/title (e.g., 'Part A - Virtual Environment Setup')\n";
+        $criteriaPrompt .= "3. Maximum points possible\n";
+        $criteriaPrompt .= "4. Whether it is a bonus section (does not count toward the base total)\n";
+        $criteriaPrompt .= "5. A brief description of what is being graded\n\n";
+        $criteriaPrompt .= "Respond with ONLY a JSON array (no markdown fences). Each element:\n";
+        $criteriaPrompt .= '{"key": "snake_case_key", "label": "Display Label", "max_points": number, "is_bonus": true/false, "description": "brief description"}' . "\n\n";
+        $criteriaPrompt .= "RULES:\n";
+        $criteriaPrompt .= "- Include ALL graded parts, including bonus sections\n";
+        $criteriaPrompt .= "- Keys must be unique snake_case identifiers\n";
+        $criteriaPrompt .= "- Order them as they appear in the exam\n";
+        $criteriaPrompt .= "- Be precise with max_points - use the exact values from the instructions\n";
+        $criteriaPrompt .= "- If no point values are specified, estimate reasonable distributions summing to 100\n";
+        $criteriaPrompt .= "- Mark bonus sections with is_bonus: true\n";
+        $criteriaPrompt .= "- Respond with ONLY the JSON array, nothing else\n";
+
+        $url = 'https://api.openai.com/v1/chat/completions';
+        $data = [
+            'model' => OPENAI_MODEL,
+            'messages' => [
+                ['role' => 'system', 'content' => 'You extract structured rubric data from exam instructions. Always respond with valid JSON only.'],
+                ['role' => 'user', 'content' => $criteriaPrompt]
+            ],
+            'temperature' => 0.2,
+            'max_completion_tokens' => 2000
+        ];
+
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_HTTPHEADER => [
+                'Content-Type: application/json',
+                'Authorization: Bearer ' . OPENAI_API_KEY
+            ],
+            CURLOPT_POSTFIELDS => json_encode($data),
+            CURLOPT_TIMEOUT => 60,
+            CURLOPT_SSL_VERIFYPEER => false
+        ]);
+
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($ch);
+        curl_close($ch);
+
+        if ($curlError) {
+            echo json_encode(['success' => false, 'error' => "cURL Error: {$curlError}"]);
+            exit;
+        }
+        if ($httpCode !== 200) {
+            $decoded = json_decode($response, true);
+            $errMsg = $decoded['error']['message'] ?? "HTTP {$httpCode}";
+            echo json_encode(['success' => false, 'error' => "API Error: {$errMsg}"]);
+            exit;
+        }
+
+        $decoded = json_decode($response, true);
+        $content = $decoded['choices'][0]['message']['content'] ?? '';
+        $content = preg_replace('/```json\s*/', '', $content);
+        $content = preg_replace('/```\s*/', '', $content);
+        $content = trim($content);
+
+        $criteria = json_decode($content, true);
+        if (!$criteria || !is_array($criteria)) {
+            echo json_encode(['success' => false, 'error' => 'Failed to parse criteria from GPT response.', 'raw' => $content]);
+            exit;
+        }
+
+        // Validate and normalize
+        $totalBase = 0;
+        $totalBonus = 0;
+        foreach ($criteria as &$c) {
+            $c['key'] = preg_replace('/[^a-z0-9_]/', '', strtolower($c['key'] ?? 'unknown'));
+            $c['label'] = $c['label'] ?? $c['key'];
+            $c['max_points'] = floatval($c['max_points'] ?? 0);
+            $c['is_bonus'] = !empty($c['is_bonus']);
+            $c['description'] = $c['description'] ?? '';
+            if ($c['is_bonus']) {
+                $totalBonus += $c['max_points'];
+            } else {
+                $totalBase += $c['max_points'];
+            }
+        }
+        unset($c);
+
+        echo json_encode([
+            'success' => true,
+            'criteria' => $criteria,
+            'total_base' => $totalBase,
+            'total_bonus' => $totalBonus
+        ]);
+        break;
+
     case 'create_session':
         $folderPath = $_POST['folder_path'] ?? '';
         $sessionName = $_POST['session_name'] ?? 'Grading Session ' . date('Y-m-d H:i');
         $examInstructions = $_POST['exam_instructions'] ?? '';
+        $criteriaJson = $_POST['criteria_json'] ?? '';
 
         if (empty(trim($examInstructions))) {
             echo json_encode(['success' => false, 'error' => 'Exam instructions are required. Please upload the exam instructions PDF.']);
+            exit;
+        }
+
+        if (empty(trim($criteriaJson))) {
+            echo json_encode(['success' => false, 'error' => 'Grading criteria are required. The system must parse criteria from your exam instructions.']);
+            exit;
+        }
+
+        // Validate criteria JSON
+        $criteria = json_decode($criteriaJson, true);
+        if (!$criteria || !is_array($criteria)) {
+            echo json_encode(['success' => false, 'error' => 'Invalid criteria format.']);
             exit;
         }
 
@@ -94,9 +212,15 @@ switch ($action) {
         $db->beginTransaction();
 
         try {
-            $stmt = $db->prepare("INSERT INTO grading_sessions (session_name, folder_path, exam_instructions, total_students, status) VALUES (?, ?, ?, ?, 'pending')");
-            $stmt->execute([$sessionName, $folderPath, $examInstructions, count($students)]);
+            $stmt = $db->prepare("INSERT INTO grading_sessions (session_name, folder_path, exam_instructions, criteria_json, total_students, status) VALUES (?, ?, ?, ?, ?, 'pending')");
+            $stmt->execute([$sessionName, $folderPath, $examInstructions, $criteriaJson, count($students)]);
             $sessionId = $db->lastInsertId();
+
+            // Store criteria in exam_criteria table
+            $critStmt = $db->prepare("INSERT INTO exam_criteria (session_id, part_label, part_name, max_points, description) VALUES (?, ?, ?, ?, ?)");
+            foreach ($criteria as $c) {
+                $critStmt->execute([$sessionId, $c['key'], $c['label'], $c['max_points'], $c['description'] ?? '']);
+            }
 
             $stmt = $db->prepare("INSERT INTO student_submissions (session_id, student_name, folder_name, folder_path, status) VALUES (?, ?, ?, ?, 'pending')");
             foreach ($students as $student) {
@@ -181,7 +305,7 @@ switch ($action) {
     case 'get_student':
         $id = intval($_GET['id'] ?? 0);
         $db = getDB();
-        $stmt = $db->prepare("SELECT * FROM student_submissions WHERE id=?");
+        $stmt = $db->prepare("SELECT s.*, gs.criteria_json FROM student_submissions s LEFT JOIN grading_sessions gs ON s.session_id = gs.id WHERE s.id=?");
         $stmt->execute([$id]);
         $student = $stmt->fetch();
         echo json_encode(['success' => true, 'student' => $student]);
@@ -191,34 +315,70 @@ switch ($action) {
         $id = intval($_POST['id'] ?? 0);
         $field = $_POST['field'] ?? '';
         $value = floatval($_POST['value'] ?? 0);
-        $allowed = ['part_a','part_b','part_c','part_d','part_e','bonus'];
-
-        if (!in_array($field, $allowed)) {
-            echo json_encode(['success' => false, 'error' => 'Invalid field']);
-            exit;
-        }
+        // Legacy fixed fields still supported for backward compatibility
+        $legacyAllowed = ['part_a','part_b','part_c','part_d','part_e','bonus'];
 
         $db = getDB();
-        $stmt = $db->prepare("UPDATE student_submissions SET `{$field}` = ? WHERE id = ?");
-        $stmt->execute([$value, $id]);
 
-        // Recalculate totals
-        $stmt = $db->prepare("SELECT part_a, part_b, part_c, part_d, part_e, bonus FROM student_submissions WHERE id = ?");
+        if (in_array($field, $legacyAllowed)) {
+            // Update legacy column
+            $stmt = $db->prepare("UPDATE student_submissions SET `{$field}` = ? WHERE id = ?");
+            $stmt->execute([$value, $id]);
+        }
+
+        // Always update scores_json
+        $stmt = $db->prepare("SELECT scores_json, session_id FROM student_submissions WHERE id = ?");
         $stmt->execute([$id]);
         $row = $stmt->fetch();
-        $total = min($row['part_a'] + $row['part_b'] + $row['part_c'] + $row['part_d'] + $row['part_e'], 100);
-        $final = min($total + $row['bonus'], 110);
+        $scoresJson = json_decode($row['scores_json'] ?? '{}', true) ?: [];
+        $scoresJson[$field] = $value;
+        $db->prepare("UPDATE student_submissions SET scores_json = ? WHERE id = ?")->execute([json_encode($scoresJson), $id]);
 
-        if ($total >= 96) $remarks = 'Outstanding';
-        elseif ($total >= 90) $remarks = 'Excellent';
-        elseif ($total >= 80) $remarks = 'Very Good';
-        elseif ($total >= 75) $remarks = 'Passed';
-        elseif ($total >= 60) $remarks = 'Needs Improvement';
-        elseif ($total > 0) $remarks = 'Failed';
+        // Get criteria to recalculate totals
+        $critStmt = $db->prepare("SELECT criteria_json FROM grading_sessions WHERE id = ?");
+        $critStmt->execute([$row['session_id']]);
+        $session = $critStmt->fetch();
+        $criteria = json_decode($session['criteria_json'] ?? '[]', true) ?: [];
+
+        $total = 0;
+        $bonusTotal = 0;
+        $maxBase = 0;
+
+        if (!empty($criteria)) {
+            // Dynamic calculation from criteria
+            foreach ($criteria as $c) {
+                $score = floatval($scoresJson[$c['key']] ?? 0);
+                if (!empty($c['is_bonus'])) {
+                    $bonusTotal += $score;
+                } else {
+                    $total += $score;
+                    $maxBase += floatval($c['max_points']);
+                }
+            }
+            $total = min($total, $maxBase);
+            $final = $total + $bonusTotal;
+            $pct = $maxBase > 0 ? round(($total / $maxBase) * 100, 1) : 0;
+        } else {
+            // Fallback to legacy columns
+            $stmt = $db->prepare("SELECT part_a, part_b, part_c, part_d, part_e, bonus FROM student_submissions WHERE id = ?");
+            $stmt->execute([$id]);
+            $scores = $stmt->fetch();
+            $total = min($scores['part_a'] + $scores['part_b'] + $scores['part_c'] + $scores['part_d'] + $scores['part_e'], 100);
+            $bonusTotal = $scores['bonus'];
+            $final = min($total + $bonusTotal, 110);
+            $pct = $total;
+        }
+
+        if ($pct >= 96) $remarks = 'Outstanding';
+        elseif ($pct >= 90) $remarks = 'Excellent';
+        elseif ($pct >= 80) $remarks = 'Very Good';
+        elseif ($pct >= 75) $remarks = 'Passed';
+        elseif ($pct >= 60) $remarks = 'Needs Improvement';
+        elseif ($pct > 0) $remarks = 'Failed';
         else $remarks = 'No Submission';
 
         $db->prepare("UPDATE student_submissions SET total_score=?, final_score=?, percentage=?, remarks=? WHERE id=?")
-           ->execute([$total, $final, $total, $remarks, $id]);
+           ->execute([$total, $final, $pct, $remarks, $id]);
 
         echo json_encode(['success' => true, 'total' => $total, 'final' => $final, 'remarks' => $remarks]);
         break;
@@ -234,21 +394,51 @@ switch ($action) {
         $sessionId = intval($_GET['session_id'] ?? 0);
         $db = getDB();
 
-        $stmt = $db->prepare("SELECT student_name, part_a, part_b, part_c, part_d, part_e, bonus, total_score, final_score, percentage, remarks, has_venv, feedback FROM student_submissions WHERE session_id=? ORDER BY student_name");
+        // Get criteria for dynamic columns
+        $critStmt = $db->prepare("SELECT criteria_json FROM grading_sessions WHERE id = ?");
+        $critStmt->execute([$sessionId]);
+        $sessionRow = $critStmt->fetch();
+        $criteria = json_decode($sessionRow['criteria_json'] ?? '[]', true) ?: [];
+
+        $stmt = $db->prepare("SELECT * FROM student_submissions WHERE session_id=? ORDER BY student_name");
         $stmt->execute([$sessionId]);
         $rows = $stmt->fetchAll();
 
         header('Content-Type: text/csv');
         header('Content-Disposition: attachment; filename="grades_session_' . $sessionId . '.csv"');
         $out = fopen('php://output', 'w');
-        fputcsv($out, ['Student', 'Part A (15)', 'Part B (15)', 'Part C (30)', 'Part D (10)', 'Part E (30)', 'Bonus (10)', 'Total (100)', 'Final (110)', 'Percentage', 'Remarks', 'Has venv', 'Feedback']);
+
+        // Build dynamic header
+        $header = ['Student'];
+        if (!empty($criteria)) {
+            foreach ($criteria as $c) {
+                $bonusTag = !empty($c['is_bonus']) ? ' [Bonus]' : '';
+                $header[] = $c['label'] . ' (' . $c['max_points'] . ')' . $bonusTag;
+            }
+        } else {
+            // Legacy fallback
+            $header = array_merge($header, ['Part A (15)', 'Part B (15)', 'Part C (30)', 'Part D (10)', 'Part E (30)', 'Bonus (10)']);
+        }
+        $header = array_merge($header, ['Total', 'Final', 'Percentage', 'Remarks', 'Has venv', 'Feedback']);
+        fputcsv($out, $header);
+
         foreach ($rows as $row) {
-            fputcsv($out, [
-                $row['student_name'], $row['part_a'], $row['part_b'], $row['part_c'],
-                $row['part_d'], $row['part_e'], $row['bonus'], $row['total_score'],
-                $row['final_score'], $row['percentage'] . '%', $row['remarks'],
-                $row['has_venv'] ? 'YES' : 'NO', str_replace("\n", " | ", $row['feedback'])
+            $line = [$row['student_name']];
+            if (!empty($criteria)) {
+                $scores = json_decode($row['scores_json'] ?? '{}', true) ?: [];
+                foreach ($criteria as $c) {
+                    $line[] = floatval($scores[$c['key']] ?? 0);
+                }
+            } else {
+                $line = array_merge($line, [$row['part_a'], $row['part_b'], $row['part_c'], $row['part_d'], $row['part_e'], $row['bonus']]);
+            }
+            $line = array_merge($line, [
+                $row['total_score'], $row['final_score'],
+                $row['percentage'] . '%', $row['remarks'],
+                $row['has_venv'] ? 'YES' : 'NO',
+                str_replace("\n", " | ", $row['feedback'])
             ]);
+            fputcsv($out, $line);
         }
         fclose($out);
         exit;

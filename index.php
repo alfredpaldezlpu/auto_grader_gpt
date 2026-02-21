@@ -241,12 +241,6 @@
             line-height: 1.6;
         }
 
-        .feedback-block.fb-part-a { border-left-color: #6366f1; }
-        .feedback-block.fb-part-b { border-left-color: #3b82f6; }
-        .feedback-block.fb-part-c { border-left-color: #8b5cf6; }
-        .feedback-block.fb-part-d { border-left-color: #f59e0b; }
-        .feedback-block.fb-part-e { border-left-color: #22c55e; }
-        .feedback-block.fb-bonus  { border-left-color: #ec4899; }
         .feedback-block.fb-overall {
             border-left-color: #a78bfa;
             background: rgba(99, 102, 241, 0.08);
@@ -260,12 +254,6 @@
             margin-bottom: 0.25rem;
         }
 
-        .feedback-block.fb-part-a .fb-label { color: #818cf8; }
-        .feedback-block.fb-part-b .fb-label { color: #60a5fa; }
-        .feedback-block.fb-part-c .fb-label { color: #a78bfa; }
-        .feedback-block.fb-part-d .fb-label { color: #fbbf24; }
-        .feedback-block.fb-part-e .fb-label { color: #4ade80; }
-        .feedback-block.fb-bonus  .fb-label { color: #f472b6; }
         .feedback-block.fb-overall .fb-label { color: #c4b5fd; }
 
         .feedback-block .fb-score {
@@ -280,6 +268,34 @@
         .feedback-block .fb-text {
             color: var(--text-muted);
         }
+
+        /* Criteria preview cards */
+        .criteria-card {
+            background: var(--surface-3);
+            border-radius: 10px;
+            padding: 0.6rem 0.9rem;
+            border-left: 3px solid var(--primary);
+            font-size: 0.82rem;
+        }
+        .criteria-card .criteria-label {
+            font-weight: 700;
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+        .criteria-card .criteria-pts {
+            font-weight: 700;
+            font-size: 0.85rem;
+            float: right;
+            color: var(--primary);
+        }
+        .criteria-card .criteria-desc {
+            color: var(--text-muted);
+            font-size: 0.78rem;
+            margin-top: 0.15rem;
+        }
+        .criteria-bonus { border-left-color: #ec4899 !important; }
+        .criteria-bonus .criteria-pts { color: #ec4899; }
 
         .animate-in {
             animation: fadeSlideIn 0.5s ease forwards;
@@ -494,6 +510,25 @@
                                 </div>
                             </div>
                         </div>
+
+                        <!-- Detected Criteria Preview -->
+                        <div id="criteriaPreview" class="mb-3 d-none">
+                            <label class="form-label fw-semibold">
+                                <i class="bi bi-list-check me-1"></i> Detected Grading Criteria
+                                <span class="badge bg-success ms-1" id="criteriaTotalBadge"></span>
+                            </label>
+                            <div id="criteriaParseProgress" class="d-none mb-2">
+                                <div class="d-flex align-items-center gap-2">
+                                    <div class="spinner-border spinner-border-sm text-info"></div>
+                                    <span class="text-muted" style="font-size: 0.85rem;">Analyzing exam instructions to detect rubric...</span>
+                                </div>
+                            </div>
+                            <div id="criteriaList" class="d-flex flex-column gap-2"></div>
+                            <div class="form-text text-muted mt-1">
+                                <i class="bi bi-info-circle me-1"></i> Criteria auto-detected from your PDF. You can re-upload to re-parse.
+                            </div>
+                        </div>
+
                         <div class="d-flex gap-2">
                             <button class="btn btn-outline-primary" onclick="scanFolder()">
                                 <i class="bi bi-search me-1"></i> Scan Folder
@@ -576,7 +611,7 @@
                 <div class="table-responsive">
                     <table class="table table-sm mb-0" id="gradesTable">
                         <thead>
-                            <tr>
+                            <tr id="gradesHead">
                                 <th width="40">#</th>
                                 <th>Student Name</th>
                                 <th class="text-center" width="65">A<br><small class="fw-normal">/15</small></th>
@@ -773,6 +808,8 @@
     // ===== PDF Upload & Extraction =====
     let extractedExamInstructions = '';
     let pdfUploaded = false;
+    let parsedCriteria = []; // Dynamic criteria parsed from PDF
+    let sessionCriteria = null; // Criteria for the currently viewed session
 
     async function handlePdfUpload(input) {
         const file = input.files[0];
@@ -817,6 +854,9 @@
             document.getElementById('pdfUploadStatus').classList.remove('d-none');
 
             showToast(`PDF uploaded & extracted: ${data.filename}`, 'success');
+
+            // Auto-parse criteria from extracted text
+            parseCriteria(data.text);
         } catch (err) {
             document.getElementById('pdfUploadProgress').classList.add('d-none');
             showToast('Error uploading PDF: ' + err.message, 'error');
@@ -832,11 +872,92 @@
     function removePdf() {
         extractedExamInstructions = '';
         pdfUploaded = false;
+        parsedCriteria = [];
         document.getElementById('examPdfFile').value = '';
         document.getElementById('pdfUploadStatus').classList.add('d-none');
         document.getElementById('pdfPreview').classList.add('d-none');
         document.getElementById('examInstructions').value = '';
+        document.getElementById('criteriaPreview').classList.add('d-none');
+        document.getElementById('criteriaList').innerHTML = '';
         showToast('PDF removed', 'info');
+    }
+
+    // ===== Dynamic Criteria Parsing =====
+    async function parseCriteria(examText) {
+        document.getElementById('criteriaPreview').classList.remove('d-none');
+        document.getElementById('criteriaParseProgress').classList.remove('d-none');
+        document.getElementById('criteriaList').innerHTML = '';
+
+        const fd = new FormData();
+        fd.append('action', 'parse_criteria');
+        fd.append('exam_text', examText);
+
+        try {
+            const res = await fetch('api.php', { method: 'POST', body: fd });
+            const data = await res.json();
+            document.getElementById('criteriaParseProgress').classList.add('d-none');
+
+            if (!data.success) {
+                showToast('Failed to parse criteria: ' + data.error, 'error');
+                document.getElementById('criteriaPreview').classList.add('d-none');
+                return;
+            }
+
+            parsedCriteria = data.criteria;
+            renderCriteriaPreview(data.criteria, data.total_base, data.total_bonus);
+            showToast(`Detected ${data.criteria.length} grading criteria (${data.total_base} base pts` + (data.total_bonus > 0 ? ` + ${data.total_bonus} bonus` : '') + ')', 'success');
+        } catch (err) {
+            document.getElementById('criteriaParseProgress').classList.add('d-none');
+            showToast('Error parsing criteria: ' + err.message, 'error');
+        }
+    }
+
+    // Color palette for dynamic criteria blocks
+    const CRITERIA_COLORS = [
+        { border: '#6366f1', label: '#818cf8' },
+        { border: '#3b82f6', label: '#60a5fa' },
+        { border: '#8b5cf6', label: '#a78bfa' },
+        { border: '#f59e0b', label: '#fbbf24' },
+        { border: '#22c55e', label: '#4ade80' },
+        { border: '#06b6d4', label: '#22d3ee' },
+        { border: '#f97316', label: '#fb923c' },
+        { border: '#14b8a6', label: '#2dd4bf' },
+        { border: '#e11d48', label: '#fb7185' },
+        { border: '#8b5cf6', label: '#c084fc' },
+        { border: '#84cc16', label: '#a3e635' },
+        { border: '#0ea5e9', label: '#38bdf8' },
+    ];
+    const BONUS_COLOR = { border: '#ec4899', label: '#f472b6' };
+
+    function getCriteriaColor(index, isBonus) {
+        if (isBonus) return BONUS_COLOR;
+        return CRITERIA_COLORS[index % CRITERIA_COLORS.length];
+    }
+
+    function renderCriteriaPreview(criteria, totalBase, totalBonus) {
+        const container = document.getElementById('criteriaList');
+        container.innerHTML = '';
+
+        const badge = document.getElementById('criteriaTotalBadge');
+        badge.textContent = `${totalBase} pts` + (totalBonus > 0 ? ` + ${totalBonus} bonus` : '');
+
+        let nonBonusIdx = 0;
+        criteria.forEach((c, i) => {
+            const color = getCriteriaColor(c.is_bonus ? 0 : nonBonusIdx, c.is_bonus);
+            if (!c.is_bonus) nonBonusIdx++;
+
+            const div = document.createElement('div');
+            div.className = 'criteria-card' + (c.is_bonus ? ' criteria-bonus' : '');
+            div.style.borderLeftColor = color.border;
+            div.innerHTML = `
+                <div class="criteria-label" style="color: ${color.label}">
+                    ${escapeHtml(c.label)}
+                    <span class="criteria-pts" style="color: ${color.label}">${c.max_points} pts${c.is_bonus ? ' (Bonus)' : ''}</span>
+                </div>
+                ${c.description ? `<div class="criteria-desc">${escapeHtml(c.description)}</div>` : ''}
+            `;
+            container.appendChild(div);
+        });
     }
 
     // Pages
@@ -909,6 +1030,11 @@
             return;
         }
 
+        if (!parsedCriteria || parsedCriteria.length === 0) {
+            showToast('Grading criteria not detected. Please re-upload the PDF.', 'warning');
+            return;
+        }
+
         const examInstructions = extractedExamInstructions;
 
         const fd = new FormData();
@@ -916,6 +1042,7 @@
         fd.append('folder_path', folderPath);
         fd.append('session_name', sessionName);
         fd.append('exam_instructions', examInstructions);
+        fd.append('criteria_json', JSON.stringify(parsedCriteria));
 
         try {
             const res = await fetch('api.php', { method: 'POST', body: fd });
@@ -1043,13 +1170,15 @@
 
             const session = data.session;
             const subs = data.submissions;
+            const criteria = JSON.parse(session.criteria_json || '[]');
+            sessionCriteria = criteria;
 
             document.getElementById('resultsTitle').textContent = session.session_name;
             document.getElementById('resultsSubtitle').textContent = `${subs.length} students | Created: ${new Date(session.created_at).toLocaleString()}`;
 
             // Stats
             const graded = subs.filter(s => s.status === 'graded');
-            const scores = graded.map(s => parseFloat(s.total_score));
+            const scores = graded.map(s => parseFloat(s.percentage || s.total_score));
             const avg = scores.length ? (scores.reduce((a,b) => a+b, 0) / scores.length).toFixed(1) : '0';
             const highest = scores.length ? Math.max(...scores).toFixed(1) : '0';
             const lowest = scores.length ? Math.min(...scores).toFixed(1) : '0';
@@ -1058,31 +1187,76 @@
 
             document.getElementById('statsRow').innerHTML = `
                 <div class="col-6 col-md-2"><div class="stat-card"><div class="stat-value">${graded.length}</div><div class="stat-label">Graded</div></div></div>
-                <div class="col-6 col-md-2"><div class="stat-card"><div class="stat-value">${avg}</div><div class="stat-label">Average</div></div></div>
-                <div class="col-6 col-md-2"><div class="stat-card"><div class="stat-value">${highest}</div><div class="stat-label">Highest</div></div></div>
-                <div class="col-6 col-md-2"><div class="stat-card"><div class="stat-value">${lowest}</div><div class="stat-label">Lowest</div></div></div>
+                <div class="col-6 col-md-2"><div class="stat-card"><div class="stat-value">${avg}%</div><div class="stat-label">Average</div></div></div>
+                <div class="col-6 col-md-2"><div class="stat-card"><div class="stat-value">${highest}%</div><div class="stat-label">Highest</div></div></div>
+                <div class="col-6 col-md-2"><div class="stat-card"><div class="stat-value">${lowest}%</div><div class="stat-label">Lowest</div></div></div>
                 <div class="col-6 col-md-2"><div class="stat-card"><div class="stat-value">${passing}/${graded.length}</div><div class="stat-label">Passing</div></div></div>
                 <div class="col-6 col-md-2"><div class="stat-card"><div class="stat-value" style="-webkit-text-fill-color:${venvCount > 0 ? '#ef4444':'#22c55e'}">${venvCount}</div><div class="stat-label">With venv</div></div></div>
             `;
 
-            // Table
+            // Dynamic table header
+            const thead = document.getElementById('gradesHead');
+            let headerHtml = '<th width="40">#</th><th>Student Name</th>';
+            if (criteria.length > 0) {
+                criteria.forEach(c => {
+                    // Short header label: take first word or abbreviation
+                    const shortHeader = c.label.length > 12 ? c.label.substring(0, 10) + '..' : c.label;
+                    const bonusTag = c.is_bonus ? ' 🌟' : '';
+                    headerHtml += `<th class="text-center" width="60" title="${escapeHtml(c.label)}">${escapeHtml(shortHeader)}${bonusTag}<br><small class="fw-normal">/${c.max_points}</small></th>`;
+                });
+            } else {
+                headerHtml += `
+                    <th class="text-center" width="65">A<br><small class="fw-normal">/15</small></th>
+                    <th class="text-center" width="65">B<br><small class="fw-normal">/15</small></th>
+                    <th class="text-center" width="65">C<br><small class="fw-normal">/30</small></th>
+                    <th class="text-center" width="65">D<br><small class="fw-normal">/10</small></th>
+                    <th class="text-center" width="65">E<br><small class="fw-normal">/30</small></th>
+                    <th class="text-center" width="65">Bonus<br><small class="fw-normal">/10</small></th>`;
+            }
+            // Compute max total from criteria
+            const maxBase = criteria.length > 0
+                ? criteria.filter(c => !c.is_bonus).reduce((sum, c) => sum + parseFloat(c.max_points), 0)
+                : 100;
+            headerHtml += `<th class="text-center" width="75">Total<br><small class="fw-normal">/${maxBase}</small></th>`;
+            headerHtml += '<th class="text-center" width="90">Remarks</th>';
+            headerHtml += '<th class="text-center" width="90">Actions</th>';
+            thead.innerHTML = headerHtml;
+
+            // Table body
             const tbody = document.getElementById('gradesBody');
             tbody.innerHTML = subs.map((s, i) => {
                 const total = parseFloat(s.total_score);
-                const scoreClass = total >= 90 ? 'score-high' : (total >= 75 ? 'score-mid' : 'score-low');
+                const pct = parseFloat(s.percentage || 0);
+                const scoreClass = pct >= 90 ? 'score-high' : (pct >= 75 ? 'score-mid' : 'score-low');
                 const remarksBadge = s.remarks ? `badge-${s.remarks.toLowerCase().replace(/\s+/g, '-')}` : '';
                 const venv = parseInt(s.has_venv) === 1 ? '<span class="venv-badge ms-1" title="venv included"><i class="bi bi-exclamation-triangle-fill"></i></span>' : '';
                 const statusIcon = s.status === 'graded' ? '' : (s.status === 'error' ? '<i class="bi bi-x-circle text-danger ms-1" title="Error"></i>' : '<i class="bi bi-clock text-warning ms-1"></i>');
 
+                let scoreCells = '';
+                if (criteria.length > 0) {
+                    const scoresObj = JSON.parse(s.scores_json || '{}');
+                    criteria.forEach(c => {
+                        const score = parseFloat(scoresObj[c.key] || 0);
+                        if (c.is_bonus) {
+                            scoreCells += `<td class="text-center score-cell">${score > 0 ? '<span class="text-info">+' + score.toFixed(1) + '</span>' : '<span class="text-muted">0</span>'}</td>`;
+                        } else {
+                            scoreCells += `<td class="text-center score-cell">${fmtScore(score, c.max_points)}</td>`;
+                        }
+                    });
+                } else {
+                    scoreCells = `
+                        <td class="text-center score-cell">${fmtScore(s.part_a, 15)}</td>
+                        <td class="text-center score-cell">${fmtScore(s.part_b, 15)}</td>
+                        <td class="text-center score-cell">${fmtScore(s.part_c, 30)}</td>
+                        <td class="text-center score-cell">${fmtScore(s.part_d, 10)}</td>
+                        <td class="text-center score-cell">${fmtScore(s.part_e, 30)}</td>
+                        <td class="text-center score-cell">${parseFloat(s.bonus) > 0 ? '<span class="text-info">+' + parseFloat(s.bonus).toFixed(1) + '</span>' : '<span class="text-muted">0</span>'}</td>`;
+                }
+
                 return `<tr>
                     <td class="text-muted">${i + 1}</td>
                     <td class="fw-semibold">${s.student_name}${venv}${statusIcon}</td>
-                    <td class="text-center score-cell">${fmtScore(s.part_a, 15)}</td>
-                    <td class="text-center score-cell">${fmtScore(s.part_b, 15)}</td>
-                    <td class="text-center score-cell">${fmtScore(s.part_c, 30)}</td>
-                    <td class="text-center score-cell">${fmtScore(s.part_d, 10)}</td>
-                    <td class="text-center score-cell">${fmtScore(s.part_e, 30)}</td>
-                    <td class="text-center score-cell">${parseFloat(s.bonus) > 0 ? '<span class="text-info">+' + parseFloat(s.bonus).toFixed(1) + '</span>' : '<span class="text-muted">0</span>'}</td>
+                    ${scoreCells}
                     <td class="text-center fw-bold ${scoreClass}" style="font-size:1.05rem">${total.toFixed(1)}</td>
                     <td class="text-center"><span class="badge ${remarksBadge}" style="font-size:0.7rem">${s.remarks || '-'}</span></td>
                     <td class="text-center">
@@ -1106,8 +1280,8 @@
         return `<span class="${cls}">${v.toFixed(1)}</span>`;
     }
 
-    // Format feedback with syntax highlighting
-    function formatFeedback(text) {
+    // Format feedback with dynamic syntax highlighting
+    function formatFeedback(text, criteria) {
         if (!text || text === 'No feedback available.') {
             return '<div class="text-muted text-center py-3"><i class="bi bi-chat-left-dots me-2"></i>No feedback available.</div>';
         }
@@ -1117,19 +1291,45 @@
         let currentBlock = null;
         let currentText = [];
 
-        const partMap = [
-            { regex: /^Part A\s*\(([^)]+)\):\s*(.*)$/i, css: 'fb-part-a', label: 'Part A — Virtual Environment' },
-            { regex: /^Part B\s*\(([^)]+)\):\s*(.*)$/i, css: 'fb-part-b', label: 'Part B — Package & README' },
-            { regex: /^Part C\s*\(([^)]+)\):\s*(.*)$/i, css: 'fb-part-c', label: 'Part C — String Utilities' },
-            { regex: /^Part D\s*\(([^)]+)\):\s*(.*)$/i, css: 'fb-part-d', label: 'Part D — Validators' },
-            { regex: /^Part E\s*\(([^)]+)\):\s*(.*)$/i, css: 'fb-part-e', label: 'Part E — Main App' },
-            { regex: /^Bonus\s*\(([^)]+)\):\s*(.*)$/i, css: 'fb-bonus', label: 'Bonus — File Processing' },
-        ];
+        // Build dynamic matchers from criteria
+        // Feedback lines have format: "Label (score/max): feedback text"
+        const sectionMatchers = [];
+
+        if (criteria && criteria.length > 0) {
+            let nonBonusIdx = 0;
+            criteria.forEach((c, i) => {
+                // Escape label for regex use
+                const escapedLabel = c.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                // Match format: "Label (score/max): text"
+                const regex = new RegExp('^' + escapedLabel + '\\s*\\(([^)]+)\\):\\s*(.*)$', 'i');
+                const color = getCriteriaColor(c.is_bonus ? 0 : nonBonusIdx, c.is_bonus);
+                if (!c.is_bonus) nonBonusIdx++;
+                sectionMatchers.push({ regex, label: c.label, color, isBonus: c.is_bonus });
+            });
+        } else {
+            // Legacy fallback matchers
+            const legacyParts = [
+                { regex: /^Part A\s*\(([^)]+)\):\s*(.*)$/i, label: 'Part A' },
+                { regex: /^Part B\s*\(([^)]+)\):\s*(.*)$/i, label: 'Part B' },
+                { regex: /^Part C\s*\(([^)]+)\):\s*(.*)$/i, label: 'Part C' },
+                { regex: /^Part D\s*\(([^)]+)\):\s*(.*)$/i, label: 'Part D' },
+                { regex: /^Part E\s*\(([^)]+)\):\s*(.*)$/i, label: 'Part E' },
+                { regex: /^Bonus\s*\(([^)]+)\):\s*(.*)$/i, label: 'Bonus' },
+            ];
+            legacyParts.forEach((p, i) => {
+                const isBonus = p.label === 'Bonus';
+                const color = getCriteriaColor(isBonus ? 0 : i, isBonus);
+                sectionMatchers.push({ regex: p.regex, label: p.label, color, isBonus });
+            });
+        }
+
+        // Also try a generic pattern: any line with "(score/max):" that doesn't match known labels
+        const genericScoreRegex = /^(.+?)\s*\(([^)]+)\):\s*(.*)$/;
 
         function flushBlock() {
             if (currentBlock) {
-                html += `<div class="feedback-block ${currentBlock.css}">
-                    <div class="fb-label">${currentBlock.label} <span class="fb-score">${currentBlock.score}</span></div>
+                html += `<div class="feedback-block" style="border-left-color: ${currentBlock.borderColor}">
+                    <div class="fb-label" style="color: ${currentBlock.labelColor}">${escapeHtml(currentBlock.label)} <span class="fb-score">${escapeHtml(currentBlock.score)}</span></div>
                     <div class="fb-text">${escapeHtml(currentText.join('\n').trim())}</div>
                 </div>`;
                 currentBlock = null;
@@ -1145,28 +1345,51 @@
             if (/^Overall:\s*(.*)$/i.test(trimmed)) {
                 flushBlock();
                 const overallText = trimmed.replace(/^Overall:\s*/i, '');
-                // Collect remaining lines as overall
-                currentBlock = { css: 'fb-overall', label: 'Overall Assessment', score: '' };
+                currentBlock = { borderColor: '#a78bfa', labelColor: '#c4b5fd', label: 'Overall Assessment', score: '' };
                 currentText = [overallText];
                 continue;
             }
 
-            // Check for Part lines
+            // Check against known section matchers
             let matched = false;
-            for (const part of partMap) {
-                const m = trimmed.match(part.regex);
+            for (const matcher of sectionMatchers) {
+                const m = trimmed.match(matcher.regex);
                 if (m) {
                     flushBlock();
-                    currentBlock = { css: part.css, label: part.label, score: m[1] };
+                    currentBlock = {
+                        borderColor: matcher.color.border,
+                        labelColor: matcher.color.label,
+                        label: matcher.label,
+                        score: m[1]
+                    };
                     currentText = [m[2] || ''];
                     matched = true;
                     break;
                 }
             }
+
+            // If no known matcher hit, try generic score pattern for unknown sections
+            if (!matched) {
+                const gm = trimmed.match(genericScoreRegex);
+                if (gm && !currentBlock) {
+                    flushBlock();
+                    // Assign a color based on how many blocks we've seen
+                    const blockIdx = html.split('feedback-block').length - 1;
+                    const color = getCriteriaColor(blockIdx, false);
+                    currentBlock = {
+                        borderColor: color.border,
+                        labelColor: color.label,
+                        label: gm[1].trim(),
+                        score: gm[2]
+                    };
+                    currentText = [gm[3] || ''];
+                    matched = true;
+                }
+            }
+
             if (!matched && currentBlock) {
                 currentText.push(trimmed);
             } else if (!matched) {
-                // Standalone text before any part
                 html += `<div class="feedback-block"><div class="fb-text">${escapeHtml(trimmed)}</div></div>`;
             }
         }
@@ -1190,15 +1413,51 @@
             const s = data.student;
 
             document.getElementById('feedbackStudentName').textContent = s.student_name;
-            document.getElementById('feedbackScores').innerHTML = `
-                <div class="col-4 col-md-2"><div class="stat-card"><div class="stat-value" style="font-size:1.3rem">${parseFloat(s.part_a).toFixed(1)}</div><div class="stat-label">Part A /15</div></div></div>
-                <div class="col-4 col-md-2"><div class="stat-card"><div class="stat-value" style="font-size:1.3rem">${parseFloat(s.part_b).toFixed(1)}</div><div class="stat-label">Part B /15</div></div></div>
-                <div class="col-4 col-md-2"><div class="stat-card"><div class="stat-value" style="font-size:1.3rem">${parseFloat(s.part_c).toFixed(1)}</div><div class="stat-label">Part C /30</div></div></div>
-                <div class="col-4 col-md-2"><div class="stat-card"><div class="stat-value" style="font-size:1.3rem">${parseFloat(s.part_d).toFixed(1)}</div><div class="stat-label">Part D /10</div></div></div>
-                <div class="col-4 col-md-2"><div class="stat-card"><div class="stat-value" style="font-size:1.3rem">${parseFloat(s.part_e).toFixed(1)}</div><div class="stat-label">Part E /30</div></div></div>
-                <div class="col-4 col-md-2"><div class="stat-card"><div class="stat-value" style="font-size:1.3rem;-webkit-text-fill-color:#22c55e">+${parseFloat(s.bonus).toFixed(1)}</div><div class="stat-label">Bonus /10</div></div></div>
-            `;
-            document.getElementById('feedbackText').innerHTML = formatFeedback(s.feedback || 'No feedback available.');
+
+            // Build dynamic score cards
+            const criteria = JSON.parse(s.criteria_json || '[]');
+            const scores = JSON.parse(s.scores_json || '{}');
+            sessionCriteria = criteria;
+
+            let scoresHtml = '';
+            if (criteria.length > 0) {
+                // Dynamic criteria-based score cards
+                const colSize = criteria.length <= 4 ? 3 : (criteria.length <= 6 ? 2 : 2);
+                let nonBonusIdx = 0;
+                criteria.forEach((c, i) => {
+                    const score = parseFloat(scores[c.key] || 0).toFixed(1);
+                    const max = parseFloat(c.max_points);
+                    const pct = max > 0 ? parseFloat(scores[c.key] || 0) / max : 0;
+                    const cls = pct >= 0.9 ? 'score-high' : (pct >= 0.7 ? 'score-mid' : 'score-low');
+                    const color = getCriteriaColor(c.is_bonus ? 0 : nonBonusIdx, c.is_bonus);
+                    if (!c.is_bonus) nonBonusIdx++;
+
+                    const bonusStyle = c.is_bonus ? `-webkit-text-fill-color:${color.label}` : '';
+                    const prefix = c.is_bonus ? '+' : '';
+                    // Short label: use first part before ' - ' or truncate
+                    const shortLabel = c.label.length > 25 ? c.label.substring(0, 22) + '...' : c.label;
+                    scoresHtml += `
+                        <div class="col-4 col-md-${colSize}">
+                            <div class="stat-card" title="${escapeHtml(c.label)}">
+                                <div class="stat-value" style="font-size:1.3rem;${bonusStyle}">${prefix}${score}</div>
+                                <div class="stat-label" style="font-size:0.7rem">${escapeHtml(shortLabel)} /${max}</div>
+                            </div>
+                        </div>`;
+                });
+            } else {
+                // Legacy fallback
+                scoresHtml = `
+                    <div class="col-4 col-md-2"><div class="stat-card"><div class="stat-value" style="font-size:1.3rem">${parseFloat(s.part_a).toFixed(1)}</div><div class="stat-label">Part A /15</div></div></div>
+                    <div class="col-4 col-md-2"><div class="stat-card"><div class="stat-value" style="font-size:1.3rem">${parseFloat(s.part_b).toFixed(1)}</div><div class="stat-label">Part B /15</div></div></div>
+                    <div class="col-4 col-md-2"><div class="stat-card"><div class="stat-value" style="font-size:1.3rem">${parseFloat(s.part_c).toFixed(1)}</div><div class="stat-label">Part C /30</div></div></div>
+                    <div class="col-4 col-md-2"><div class="stat-card"><div class="stat-value" style="font-size:1.3rem">${parseFloat(s.part_d).toFixed(1)}</div><div class="stat-label">Part D /10</div></div></div>
+                    <div class="col-4 col-md-2"><div class="stat-card"><div class="stat-value" style="font-size:1.3rem">${parseFloat(s.part_e).toFixed(1)}</div><div class="stat-label">Part E /30</div></div></div>
+                    <div class="col-4 col-md-2"><div class="stat-card"><div class="stat-value" style="font-size:1.3rem;-webkit-text-fill-color:#22c55e">+${parseFloat(s.bonus).toFixed(1)}</div><div class="stat-label">Bonus /10</div></div></div>
+                `;
+            }
+
+            document.getElementById('feedbackScores').innerHTML = scoresHtml;
+            document.getElementById('feedbackText').innerHTML = formatFeedback(s.feedback || 'No feedback available.', criteria);
 
             if (parseInt(s.has_venv) === 1) {
                 document.getElementById('feedbackVenv').classList.remove('d-none');

@@ -172,25 +172,11 @@ class GradingEngine {
     /**
      * Build the GPT prompt for grading a student
      */
-    public static function buildGradingPrompt($studentName, $codeFiles, $examInstructions = '') {
+    public static function buildGradingPrompt($studentName, $codeFiles, $examInstructions = '', $criteria = []) {
         $prompt = "You are a strict but fair programming instructor grading a Python Practical Exam submission.\n\n";
 
         if ($examInstructions) {
             $prompt .= "=== EXAM INSTRUCTIONS ===\n{$examInstructions}\n\n";
-        } else {
-            $prompt .= "=== EXAM: Text Processing Pipeline ===\n";
-            $prompt .= "Part A - Virtual Environment Setup (15 pts): Create venv, install packages. DEDUCT 5 pts if venv folder is included in submission.\n";
-            $prompt .= "Part B - External Package & README (15 pts): Install external package (rich/colorama/slugify etc), README.md with package name, install command, rationale (5pts each).\n";
-            $prompt .= "Part C - String Utilities Module (30 pts): utils/text_tools.py with 4 functions (7.5 pts each):\n";
-            $prompt .= "  - clean_text(text): strip, collapse whitespace, remove punctuation\n";
-            $prompt .= "  - word_stats(text): return dict with char_count, char_no_spaces, word_count, sentence_count, longest_word\n";
-            $prompt .= "  - mask_sensitive(text): mask emails/phones with ***\n";
-            $prompt .= "  - make_slug(text): lowercase, replace spaces with hyphens, remove special chars, collapse hyphens\n";
-            $prompt .= "Part D - Input Validators Module (10 pts): utils/validators.py with 2 functions (5pts each):\n";
-            $prompt .= "  - require_non_empty(prompt_msg): loop until non-empty input\n";
-            $prompt .= "  - require_menu_choice(prompt_msg, choices): loop until valid choice\n";
-            $prompt .= "Part E - Main Application (30 pts): app.py with looping menu (8pts), process inputs via modules (8pts), log to results.txt with timestamps (7pts), integrate external package (7pts)\n";
-            $prompt .= "Bonus - File Processing (+10 pts): Option 7 to load text from file and process it\n\n";
         }
 
         $prompt .= "=== STUDENT: {$studentName} ===\n\n";
@@ -212,26 +198,39 @@ class GradingEngine {
         $prompt .= "=== GRADING INSTRUCTIONS ===\n";
         $prompt .= "Grade this student's submission. You MUST respond in EXACTLY this JSON format (no markdown, no code fences):\n";
         $prompt .= "{\n";
-        $prompt .= '  "part_a": <0-15 number>,'. "\n";
-        $prompt .= '  "part_a_feedback": "<brief feedback for Part A>",'. "\n";
-        $prompt .= '  "part_b": <0-15 number>,'. "\n";
-        $prompt .= '  "part_b_feedback": "<brief feedback for Part B>",'. "\n";
-        $prompt .= '  "part_c": <0-30 number>,'. "\n";
-        $prompt .= '  "part_c_feedback": "<brief feedback for Part C>",'. "\n";
-        $prompt .= '  "part_d": <0-10 number>,'. "\n";
-        $prompt .= '  "part_d_feedback": "<brief feedback for Part D>",'. "\n";
-        $prompt .= '  "part_e": <0-30 number>,'. "\n";
-        $prompt .= '  "part_e_feedback": "<brief feedback for Part E>",'. "\n";
-        $prompt .= '  "bonus": <0-10 number>,'. "\n";
-        $prompt .= '  "bonus_feedback": "<brief feedback for bonus>",'. "\n";
+
+        if (!empty($criteria)) {
+            // Dynamic criteria-based prompt
+            foreach ($criteria as $c) {
+                $key = $c['key'];
+                $max = floatval($c['max_points']);
+                $label = $c['label'];
+                $desc = $c['description'] ?? '';
+                $bonusNote = !empty($c['is_bonus']) ? ' (BONUS - separate from base total)' : '';
+                $prompt .= "  \"{$key}\": <0-{$max} number>,  // {$label}{$bonusNote}\n";
+                $prompt .= "  \"{$key}_feedback\": \"<brief feedback for {$label}>\",\n";
+            }
+        } else {
+            // Fallback to legacy format
+            $prompt .= '  "part_a": <0-15 number>,'. "\n";
+            $prompt .= '  "part_a_feedback": "<brief feedback for Part A>",'. "\n";
+            $prompt .= '  "part_b": <0-15 number>,'. "\n";
+            $prompt .= '  "part_b_feedback": "<brief feedback for Part B>",'. "\n";
+            $prompt .= '  "part_c": <0-30 number>,'. "\n";
+            $prompt .= '  "part_c_feedback": "<brief feedback for Part C>",'. "\n";
+            $prompt .= '  "part_d": <0-10 number>,'. "\n";
+            $prompt .= '  "part_d_feedback": "<brief feedback for Part D>",'. "\n";
+            $prompt .= '  "part_e": <0-30 number>,'. "\n";
+            $prompt .= '  "part_e_feedback": "<brief feedback for Part E>",'. "\n";
+            $prompt .= '  "bonus": <0-10 number>,'. "\n";
+            $prompt .= '  "bonus_feedback": "<brief feedback for bonus>",'. "\n";
+        }
         $prompt .= '  "overall_feedback": "<2-3 sentence overall assessment>"'. "\n";
         $prompt .= "}\n\n";
         $prompt .= "IMPORTANT RULES:\n";
-        $prompt .= "- If venv folder is included, deduct 5 points from Part A\n";
-        $prompt .= "- If text_tools.py or validators.py are NOT inside utils/ folder, apply small deductions\n";
+        $prompt .= "- If venv folder is included in the submission, deduct points as appropriate\n";
         $prompt .= "- Grade based on code quality, correctness, and completeness\n";
         $prompt .= "- Be fair but strict. Only give full marks if implementation is correct\n";
-        $prompt .= "- The total (parts A-E) should not exceed 100. Bonus is separate (+10 max)\n";
         $prompt .= "- Respond with ONLY the JSON object, nothing else\n";
 
         return $prompt;
@@ -314,6 +313,9 @@ class GradingEngine {
         $stmt->execute([$sessionId]);
         $session = $stmt->fetch();
 
+        // Parse criteria
+        $criteria = json_decode($session['criteria_json'] ?? '[]', true) ?: [];
+
         // Update status
         $db->prepare("UPDATE student_submissions SET status = 'grading' WHERE id = ?")->execute([$submissionId]);
 
@@ -332,7 +334,8 @@ class GradingEngine {
         $prompt = self::buildGradingPrompt(
             $submission['student_name'],
             $codeFiles,
-            $session['exam_instructions'] ?? ''
+            $session['exam_instructions'] ?? '',
+            $criteria
         );
 
         $result = self::callGPT($prompt);
@@ -344,33 +347,79 @@ class GradingEngine {
         }
 
         $g = $result['grades'];
-        $partA = floatval($g['part_a'] ?? 0);
-        $partB = floatval($g['part_b'] ?? 0);
-        $partC = floatval($g['part_c'] ?? 0);
-        $partD = floatval($g['part_d'] ?? 0);
-        $partE = floatval($g['part_e'] ?? 0);
-        $bonus = floatval($g['bonus'] ?? 0);
-        $total = $partA + $partB + $partC + $partD + $partE;
-        $total = min($total, 100);
-        $final = min($total + $bonus, 110);
-        $pct = $total;
 
-        if ($total >= 96) $remarks = 'Outstanding';
-        elseif ($total >= 90) $remarks = 'Excellent';
-        elseif ($total >= 80) $remarks = 'Very Good';
-        elseif ($total >= 75) $remarks = 'Passed';
-        elseif ($total >= 60) $remarks = 'Needs Improvement';
-        elseif ($total > 0) $remarks = 'Failed';
-        else $remarks = 'No Submission';
+        // Dynamic score calculation
+        $scoresJson = [];
+        $total = 0;
+        $bonusTotal = 0;
+        $maxBase = 0;
+        $feedback = '';
 
-        // Build feedback text
-        $feedback = "Part A ({$partA}/15): " . ($g['part_a_feedback'] ?? '') . "\n";
-        $feedback .= "Part B ({$partB}/15): " . ($g['part_b_feedback'] ?? '') . "\n";
-        $feedback .= "Part C ({$partC}/30): " . ($g['part_c_feedback'] ?? '') . "\n";
-        $feedback .= "Part D ({$partD}/10): " . ($g['part_d_feedback'] ?? '') . "\n";
-        $feedback .= "Part E ({$partE}/30): " . ($g['part_e_feedback'] ?? '') . "\n";
-        if ($bonus > 0) $feedback .= "Bonus ({$bonus}/10): " . ($g['bonus_feedback'] ?? '') . "\n";
+        // Legacy column values (for backward compat)
+        $partA = 0; $partB = 0; $partC = 0; $partD = 0; $partE = 0; $bonusLegacy = 0;
+        $legacyMap = ['part_a' => 0, 'part_b' => 0, 'part_c' => 0, 'part_d' => 0, 'part_e' => 0, 'bonus' => 0];
+
+        if (!empty($criteria)) {
+            foreach ($criteria as $c) {
+                $key = $c['key'];
+                $score = floatval($g[$key] ?? 0);
+                $max = floatval($c['max_points']);
+                $label = $c['label'];
+                $fb = $g[$key . '_feedback'] ?? '';
+                $scoresJson[$key] = $score;
+
+                if (!empty($c['is_bonus'])) {
+                    $bonusTotal += $score;
+                    $feedback .= "{$label} ({$score}/{$max}): {$fb}\n";
+                } else {
+                    $total += $score;
+                    $maxBase += $max;
+                    $feedback .= "{$label} ({$score}/{$max}): {$fb}\n";
+                }
+
+                // Map to legacy columns if key matches
+                if (isset($legacyMap[$key])) {
+                    $legacyMap[$key] = $score;
+                }
+            }
+            $total = min($total, $maxBase);
+            $final = $total + $bonusTotal;
+            $pct = $maxBase > 0 ? round(($total / $maxBase) * 100, 1) : 0;
+        } else {
+            // Legacy fallback
+            $legacyMap['part_a'] = floatval($g['part_a'] ?? 0);
+            $legacyMap['part_b'] = floatval($g['part_b'] ?? 0);
+            $legacyMap['part_c'] = floatval($g['part_c'] ?? 0);
+            $legacyMap['part_d'] = floatval($g['part_d'] ?? 0);
+            $legacyMap['part_e'] = floatval($g['part_e'] ?? 0);
+            $legacyMap['bonus'] = floatval($g['bonus'] ?? 0);
+
+            $total = $legacyMap['part_a'] + $legacyMap['part_b'] + $legacyMap['part_c'] + $legacyMap['part_d'] + $legacyMap['part_e'];
+            $total = min($total, 100);
+            $bonusTotal = $legacyMap['bonus'];
+            $final = min($total + $bonusTotal, 110);
+            $pct = $total;
+
+            $feedback = "Part A ({$legacyMap['part_a']}/15): " . ($g['part_a_feedback'] ?? '') . "\n";
+            $feedback .= "Part B ({$legacyMap['part_b']}/15): " . ($g['part_b_feedback'] ?? '') . "\n";
+            $feedback .= "Part C ({$legacyMap['part_c']}/30): " . ($g['part_c_feedback'] ?? '') . "\n";
+            $feedback .= "Part D ({$legacyMap['part_d']}/10): " . ($g['part_d_feedback'] ?? '') . "\n";
+            $feedback .= "Part E ({$legacyMap['part_e']}/30): " . ($g['part_e_feedback'] ?? '') . "\n";
+            if ($bonusTotal > 0) $feedback .= "Bonus ({$bonusTotal}/10): " . ($g['bonus_feedback'] ?? '') . "\n";
+
+            // Also store in scoresJson for consistency
+            $scoresJson = $legacyMap;
+        }
+
         $feedback .= "\nOverall: " . ($g['overall_feedback'] ?? '');
+
+        if ($pct >= 96) $remarks = 'Outstanding';
+        elseif ($pct >= 90) $remarks = 'Excellent';
+        elseif ($pct >= 80) $remarks = 'Very Good';
+        elseif ($pct >= 75) $remarks = 'Passed';
+        elseif ($pct >= 60) $remarks = 'Needs Improvement';
+        elseif ($pct > 0) $remarks = 'Failed';
+        else $remarks = 'No Submission';
 
         $structure = json_decode($codeFiles['_structure'], true);
         $hasVenv = $structure['has_venv'] ? 1 : 0;
@@ -378,13 +427,16 @@ class GradingEngine {
 
         $stmt = $db->prepare("UPDATE student_submissions SET 
             part_a=?, part_b=?, part_c=?, part_d=?, part_e=?, bonus=?,
+            scores_json=?,
             total_score=?, final_score=?, percentage=?, remarks=?,
             has_venv=?, venv_location=?, feedback=?, 
             code_files=?, gpt_response=?,
             status='graded', graded_at=NOW()
             WHERE id = ?");
         $stmt->execute([
-            $partA, $partB, $partC, $partD, $partE, $bonus,
+            $legacyMap['part_a'], $legacyMap['part_b'], $legacyMap['part_c'],
+            $legacyMap['part_d'], $legacyMap['part_e'], $legacyMap['bonus'],
+            json_encode($scoresJson),
             $total, $final, $pct, $remarks,
             $hasVenv, $venvLoc, $feedback,
             json_encode($codeFiles), $result['raw'],
