@@ -1,0 +1,49 @@
+====================================================================================================
+IT 103 Python Practical Exam - Automated Grading | 31 submissions
+====================================================================================================
+Student                              A/15  B/15  C/30  D/10  E/30  Bon   Total
+----------------------------------------------------------------------------------------------------
+Anica Daniella Santos                  15    15  28.5  10.0  30.0    7  98.5/100
+Aulstyne Lou Ronquillo                 15    15  30.0  10.0  30.0    7 100.0/100
+Beatrice Linayao                       15     6  30.0  10.0  29.0   10  90.0/100
+Carl Haiden Aniciete                   15    13  30.0  10.0  30.0    3  98.0/100
+Christian James Puro                   10    15  30.0  10.0  30.0    3  95.0/100
+Edson Paul Melad                       15    15  28.0  10.0  30.0    3  98.0/100
+Eitan Celestyn Sarquilla               15    15  30.0   7.0  30.0    3  97.0/100
+Enoch Camayang                         15    15  28.5  10.0  30.0    3  98.5/100
+Hans Gabriel Rodis                     15    15  30.0  10.0  30.0    3 100.0/100
+Hanz Gabriel Laurio                    15    10  28.0   9.0  29.0   10  91.0/100
+Ivan Joseph Zara                       15    15  28.0  10.0  30.0   10  98.0/100
+J-ann Marc Riman                       15    15  30.0  10.0  30.0   10 100.0/100
+Jeremiah Aeron Javier                  10     5  30.0  10.0  30.0    7  85.0/100
+John Keneth Miole                      15    15  30.0  10.0  28.0    3  98.0/100
+John Paul Apolinar                     15     5  28.0  10.0  30.0    3  88.0/100
+Junil Flaminiano                       15    15  30.0  10.0  30.0   10 100.0/100
+Ken Cyrus Benitez                      10     5  11.5  10.0  28.0   10  64.5/100
+Kurt Lawrence Tavara                   15    10  30.0  10.0  30.0    3  95.0/100
+Marie Angeline Cornejo                 15    15  30.0  10.0  30.0   10 100.0/100
+Mark Andrei Almaden                    15    15  28.5  10.0  30.0   10  98.5/100
+Mark Jiruel Gonzales                   15     5  30.0  10.0  30.0   10  90.0/100
+Nathaniel Casitllo                     15    15  27.0  10.0  30.0    3  97.0/100
+Neil Owen CAMPA�ANO                    15    15  26.5  10.0  30.0   10  96.5/100
+Ralph Jacob Robinion                   15    15  30.0  10.0  28.0   10  98.0/100
+Renamae Sambilay                       15    15  30.0  10.0  28.0   10  98.0/100
+Ricardo Emmanuel Rodriguez Iii         15    15  30.0  10.0  30.0    7 100.0/100
+Rochevienne Quibo                      15    15  26.5  10.0  26.0   10  92.5/100
+Russel Carino                          15    15  28.5  10.0  30.0   10  98.5/100
+Shady Gamboa                           10    15  30.0  10.0  30.0    3  95.0/100
+Vincejerald Boison                     15    15  28.0  10.0  30.0   10  98.0/100
+Yuan Abraham Gruyal                    15    12  27.0   9.0  17.0   10  80.0/100
+====================================================================================================
+
+CLASS SUMMARY
+----------------------------------------
+Total: 31 students
+Submissions: 31
+Average: 94.7/100
+Highest: 100.0/100
+Lowest: 64.5/100
+Passing (>=75): 30/31
+
+Report saved: c:\Users\C203-PROF\Desktop\paldez\CAV-CCS-DCSN03C_2-2526-2nd-Practical Exam Submission-IT 103-78273\IT103_Practical_Exam_Grades.xlsx
+====================================================================================================
